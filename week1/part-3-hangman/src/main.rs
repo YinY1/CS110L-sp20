@@ -17,6 +17,8 @@ use rand::Rng;
 use std::fs;
 use std::io;
 use std::io::Write;
+use std::iter::FromIterator;
+use std::vec;
 
 const NUM_INCORRECT_GUESSES: u32 = 5;
 const WORDS_PATH: &str = "words.txt";
@@ -37,4 +39,64 @@ fn main() {
     // println!("random word: {}", secret_word);
 
     // Your code here! :)
+    println!("Welcome to CS110L Hangman!");
+
+    let mut chances = NUM_INCORRECT_GUESSES;
+    let mut rest = secret_word_chars.len();
+    let mut guessed: Vec<char> = Vec::new();
+    let mut correct: Vec<char> = vec!['-'; rest];
+    while chances > 0 && rest > 0 {
+        let letter = do_guess(chances, &mut guessed, &correct);
+        if !check_guess(letter, &mut correct, &secret_word_chars) {
+            chances -= 1;
+        } else {
+            rest -= 1;
+        }
+        println!();
+    }
+    if chances > 0 {
+        println!(
+            "Congratulations you guessed the secret word: {}!",
+            secret_word
+        );
+    } else {
+        println!("Sorry, you ran out of guesses! ");
+    }
+}
+
+fn do_guess(chances: u32, guess: &mut Vec<char>, correct: &[char]) -> char {
+    println!("The word so far is {}", String::from_iter(correct.iter()));
+    println!(
+        "You have guessed the following letters: {}",
+        String::from_iter(guess.iter())
+    );
+    println!("You have {chances} guesses left");
+    print!("Please guess a letter: ");
+
+    io::stdout().flush().expect("Error flushing stdout.");
+
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Error reading line.");
+
+    let letter: char = input.chars().next().unwrap();
+    guess.push(letter);
+
+    letter
+}
+
+fn check_guess(letter: char, correct: &mut [char], secret: &Vec<char>) -> bool {
+    let mut i = 0;
+    while i < secret.len() {
+        let c = secret[i];
+        if c == letter && correct[i] == '-' {
+            correct[i] = c;
+            return true;
+        }
+        i += 1;
+    }
+    println!("Sorry, that letter is not in the word");
+
+    false
 }
