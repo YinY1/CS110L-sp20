@@ -7,15 +7,32 @@ fn main() {
 }
 
 fn add_n(v: Vec<i32>, n: i32) -> Vec<i32> {
-    unimplemented!()
+    let mut rv = Vec::new();
+    for i in &v{
+        rv.push(i+n);
+    }
+    rv
 }
 
 fn add_n_inplace(v: &mut Vec<i32>, n: i32) {
-    unimplemented!()
+    for i in v{
+        *i+=n;
+    }
 }
 
 fn dedup(v: &mut Vec<i32>) {
-    unimplemented!()
+    let mut set: HashSet<i32> = HashSet::new();
+    let mut i = 0;
+    while i < v.len(){
+        let num = &v[i];
+        if set.contains(num){
+            v.remove(i);
+        }
+        else {
+            set.insert(*num);
+            i+=1;
+        }
+    }
 }
 
 #[cfg(test)]
