@@ -34,8 +34,8 @@ fn main() {
     println!("list == list4: {}", list == list4);
     println!("list:{}\nlist4:{}",list,list4);
     
-    // If you implement iterator trait:
-    //for val in &list {
-    //    println!("{}", val);
-    //}
+    //If you implement iterator trait:
+    for val in &list {
+        println!("{}", val);
+    }
 }
