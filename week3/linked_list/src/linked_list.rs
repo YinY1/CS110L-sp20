@@ -1,12 +1,13 @@
 use std::fmt;
 use std::option::Option;
 
+#[derive(Clone, PartialEq)]
 pub struct LinkedList<T> {
     head: Option<Box<Node<T>>>,
     size: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Node<T> {
     value: T,
     next: Option<Box<Node<T>>>,
@@ -72,34 +73,5 @@ impl<T> Drop for LinkedList<T> {
         while let Some(mut node) = current {
             current = node.next.take();
         }
-    }
-}
-
-impl<T: Clone> Clone for LinkedList<T> {
-    fn clone(&self) -> Self {
-        LinkedList {
-            head: self.head.clone(),
-            size: self.size,
-        }
-    }
-}
-
-impl<T:PartialEq> PartialEq for LinkedList<T> {
-    fn eq(&self, other: &Self) -> bool {
-        if self.size != other.size {
-            return false;
-        }
-        let mut current_a = &self.head;
-        let mut current_b = &other.head;
-        loop {
-            let Some(node_a) = current_a else { break };
-            let Some(node_b) = current_b else { break };
-            if node_a.value != node_b.value {
-                return false;
-            }
-            current_a = &node_a.next;
-            current_b = &node_b.next;
-        }
-        true
     }
 }
