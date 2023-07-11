@@ -1,4 +1,6 @@
 use linked_list::LinkedList;
+
+use crate::linked_list::ComputeNorm;
 pub mod linked_list;
 
 fn main() {
@@ -38,4 +40,11 @@ fn main() {
     for val in &list {
         println!("{}", val);
     }
+
+    let mut listf:LinkedList<f64> = LinkedList::new();
+    for _ in 1..12{
+        listf.push_front(1f64);
+    }
+    println!("compute norm: {}",listf.compute_norm());
+    
 }
