@@ -32,32 +32,56 @@ impl Debugger {
         loop {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => {
+                    if self.inferior.is_some() {
+                        self.get_inferior().kill().expect("Error killing inferior");
+                    }
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
                         self.inferior = Some(inferior);
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
                         // to the Inferior object
-                        let status = self.inferior.as_mut().unwrap().wake_up().ok().unwrap();
-                        match status {
-                            Status::Stopped(signal, pointer) => {
-                                println!("Child stopped with {signal} at {pointer}");
-                            }
-                            Status::Exited(exit_code) => {
-                                println!("Child exited (status: {exit_code})");
-                            }
-                            Status::Signaled(signal) => {
-                                println!("Child exited (signal {signal})");
-                            }
-                        }
+                        self.run_inferior();
                     } else {
                         println!("Error starting subprocess");
                     }
                 }
                 DebuggerCommand::Quit => {
+                    if self.inferior.is_some() {
+                        self.get_inferior().kill().expect("Error killing inferior");
+                    }
                     return;
+                }
+                DebuggerCommand::Continue => {
+                    if self.inferior.is_none() {
+                        println!("No inferior is running");
+                    } else {
+                        self.run_inferior();
+                    }
                 }
             }
         }
+    }
+
+    fn run_inferior(&mut self) {
+        let status = self
+            .get_inferior()
+            .wake_up()
+            .expect("Error getting inferior status");
+        match status {
+            Status::Stopped(signal, _pointer) => {
+                println!("Child stopped (signal {signal})");
+            }
+            Status::Exited(exit_code) => {
+                println!("Child exited (status: {exit_code})");
+            }
+            Status::Signaled(signal) => {
+                println!("Child exited (signal {signal})");
+            }
+        }
+    }
+
+    fn get_inferior(&mut self) -> &mut Inferior {
+        self.inferior.as_mut().unwrap()
     }
 
     /// This function prompts the user to enter a command, and continues re-prompting until the user
@@ -80,7 +104,7 @@ impl Debugger {
                     panic!("Unexpected I/O error: {:?}", err);
                 }
                 Ok(line) => {
-                    if line.trim().len() == 0 {
+                    if line.trim().is_empty() {
                         continue;
                     }
                     self.readline.add_history_entry(line.as_str());
