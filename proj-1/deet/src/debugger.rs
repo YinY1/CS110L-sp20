@@ -1,4 +1,5 @@
 use crate::debugger_command::DebuggerCommand;
+use crate::dwarf_data::{DwarfData, Error as DwarfError};
 use crate::inferior::{Inferior, Status};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -8,12 +9,23 @@ pub struct Debugger {
     history_path: String,
     readline: Editor<()>,
     inferior: Option<Inferior>,
+    debug_data: DwarfData,
 }
 
 impl Debugger {
     /// Initializes the debugger.
     pub fn new(target: &str) -> Debugger {
-        // TODO (milestone 3): initialize the DwarfData
+        let debug_data = match DwarfData::from_file(target) {
+            Ok(val) => val,
+            Err(DwarfError::ErrorOpeningFile) => {
+                println!("Could not open file {}", target);
+                std::process::exit(1);
+            }
+            Err(DwarfError::DwarfFormatError(err)) => {
+                println!("Could not debugging symbols from {}: {:?}", target, err);
+                std::process::exit(1);
+            }
+        };
 
         let history_path = format!("{}/.deet_history", std::env::var("HOME").unwrap());
         let mut readline = Editor::<()>::new();
@@ -25,6 +37,7 @@ impl Debugger {
             history_path,
             readline,
             inferior: None,
+            debug_data,
         }
     }
 
@@ -33,7 +46,9 @@ impl Debugger {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => {
                     if self.inferior.is_some() {
-                        self.get_inferior().kill().expect("Error killing inferior");
+                        self.get_inferior_as_mut()
+                            .kill()
+                            .expect("Error killing inferior");
                     }
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
@@ -47,7 +62,9 @@ impl Debugger {
                 }
                 DebuggerCommand::Quit => {
                     if self.inferior.is_some() {
-                        self.get_inferior().kill().expect("Error killing inferior");
+                        self.get_inferior_as_mut()
+                            .kill()
+                            .expect("Error killing inferior");
                     }
                     return;
                 }
@@ -58,18 +75,25 @@ impl Debugger {
                         self.run_inferior();
                     }
                 }
+                DebuggerCommand::Backtrace => {
+                    self.get_inferior_as_ref()
+                        .print_backtrace(&self.debug_data)
+                        .expect("Error backtracing");
+                }
             }
         }
     }
 
     fn run_inferior(&mut self) {
         let status = self
-            .get_inferior()
+            .get_inferior_as_mut()
             .wake_up()
             .expect("Error getting inferior status");
         match status {
-            Status::Stopped(signal, _pointer) => {
+            Status::Stopped(signal, rip) => {
                 println!("Child stopped (signal {signal})");
+                let line = self.debug_data.get_line_from_addr(rip).unwrap();
+                println!("Stopped at {}",line);
             }
             Status::Exited(exit_code) => {
                 println!("Child exited (status: {exit_code})");
@@ -80,8 +104,12 @@ impl Debugger {
         }
     }
 
-    fn get_inferior(&mut self) -> &mut Inferior {
+    fn get_inferior_as_mut(&mut self) -> &mut Inferior {
         self.inferior.as_mut().unwrap()
+    }
+
+    fn get_inferior_as_ref(&self) -> &Inferior {
+        self.inferior.as_ref().unwrap()
     }
 
     /// This function prompts the user to enter a command, and continues re-prompting until the user
