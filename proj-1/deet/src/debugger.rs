@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 
 use crate::debugger_command::DebuggerCommand;
 use crate::dwarf_data::{DwarfData, Error as DwarfError};
@@ -131,6 +132,12 @@ impl Debugger {
                 println!("Child stopped (signal {signal})");
                 let line = self.debug_data.get_line_from_addr(rip).unwrap();
                 println!("Stopped at {}", line);
+
+                let path = &line.file;
+                let line_number = line.number - 1;
+                if let Some(code) = fs::read_to_string(path).unwrap().lines().nth(line_number) {
+                    println!("{}", code); // print source code of the line
+                }
             }
             Status::Exited(exit_code) => {
                 println!("Child exited (status: {exit_code})");
