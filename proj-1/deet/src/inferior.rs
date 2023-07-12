@@ -1,7 +1,10 @@
 use nix::sys::ptrace;
 use nix::sys::signal;
+use nix::sys::signal::Signal::SIGTRAP;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use std::collections::HashMap;
+use std::mem::size_of;
 use std::os::unix::process::CommandExt;
 use std::process::Child;
 use std::process::Command;
@@ -34,18 +37,34 @@ pub struct Inferior {
     child: Child,
 }
 
+fn align_addr_to_word(addr: usize) -> usize {
+    addr & (-(size_of::<usize>() as isize) as usize)
+}
+
 impl Inferior {
     /// Attempts to start a new inferior process. Returns Some(Inferior) if successful, or None if
     /// an error is encountered.
-    pub fn new(target: &str, args: &Vec<String>) -> Option<Inferior> {
+    pub fn new(
+        target: &str,
+        args: &Vec<String>,
+        break_points: &mut HashMap<usize, u8>,
+    ) -> Option<Inferior> {
         let mut cmd = Command::new(target);
         cmd.args(args);
         unsafe {
             cmd.pre_exec(child_traceme);
         }
         let child = cmd.spawn().expect("Child process error");
-        let inferior = Inferior { child };
+        let mut inferior = Inferior { child };
         let status = inferior.wait(None).ok()?;
+
+        for (addr, orig_byte) in break_points {
+            // replacing the byte at breakpoint with the value 0xcc
+            *orig_byte = inferior
+                .write_byte(*addr, 0xcc)
+                .expect("Error setting breakpoint");
+        }
+
         if let Status::Stopped(signal::Signal::SIGTRAP, _signal) = status {
             Some(inferior)
         } else {
@@ -53,8 +72,52 @@ impl Inferior {
         }
     }
 
-    pub fn wake_up(&self) -> Result<Status, nix::Error> {
-        ptrace::cont(self.pid(), None)?;
+    fn write_byte(&mut self, addr: usize, val: u8) -> Result<u8, nix::Error> {
+        let aligned_addr = align_addr_to_word(addr);
+        let byte_offset = addr - aligned_addr;
+        let word = ptrace::read(self.pid(), aligned_addr as ptrace::AddressType)? as u64;
+        let orig_byte = (word >> (8 * byte_offset)) & 0xff;
+        let masked_word = word & !(0xff << (8 * byte_offset));
+        let updated_word = masked_word | ((val as u64) << (8 * byte_offset));
+        ptrace::write(
+            self.pid(),
+            aligned_addr as ptrace::AddressType,
+            updated_word as *mut std::ffi::c_void,
+        )?;
+        Ok(orig_byte as u8)
+    }
+
+    /// commend 'contunie' after pause the debugger
+    pub fn wake_up(&mut self, break_points: &HashMap<usize, u8>) -> Result<Status, nix::Error> {
+        let pid = self.pid();
+        let mut regs = ptrace::getregs(pid)?;
+        let rip = regs.rip as usize;
+
+        // check if inferior stopped at a breakpoint
+        if let Some(orig_byte) = break_points.get(&(rip - 1)) {
+            self.write_byte(rip - 1, *orig_byte)
+                .expect("Error restoring original first byte of instruction");
+            regs.rip = (rip - 1) as u64;
+            ptrace::setregs(pid, regs).expect("Error rewingding instruction pointer");
+
+            ptrace::step(pid, None)?;
+            let status = self.wait(None)?;
+            match status {
+                Status::Stopped(SIGTRAP, _ins_ptr) => {
+                    self.write_byte(rip - 1, 0xcc)
+                        .expect("Error restoring 0xcc in breakpoint");
+                }
+                Status::Exited(exit_code) => {
+                    return Ok(Status::Exited(exit_code));
+                }
+                Status::Signaled(signal) => {
+                    return Ok(Status::Signaled(signal));
+                }
+                _ => {}
+            }
+        }
+
+        ptrace::cont(pid, None)?;
         self.wait(None)
     }
 

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::debugger_command::DebuggerCommand;
 use crate::dwarf_data::{DwarfData, Error as DwarfError};
 use crate::inferior::{Inferior, Status};
@@ -10,6 +12,7 @@ pub struct Debugger {
     readline: Editor<()>,
     inferior: Option<Inferior>,
     debug_data: DwarfData,
+    break_points: HashMap<usize, u8>,
 }
 
 impl Debugger {
@@ -38,6 +41,7 @@ impl Debugger {
             readline,
             inferior: None,
             debug_data,
+            break_points: HashMap::new(),
         }
     }
 
@@ -50,7 +54,9 @@ impl Debugger {
                             .kill()
                             .expect("Error killing inferior");
                     }
-                    if let Some(inferior) = Inferior::new(&self.target, &args) {
+                    if let Some(inferior) =
+                        Inferior::new(&self.target, &args, &mut self.break_points)
+                    {
                         // Create the inferior
                         self.inferior = Some(inferior);
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
@@ -80,20 +86,51 @@ impl Debugger {
                         .print_backtrace(&self.debug_data)
                         .expect("Error backtracing");
                 }
+                DebuggerCommand::Break(target) => {
+                    let addr = if let Some(address) = target.strip_prefix('*') {
+                        if let Some(avalible) = parse_address(address) {
+                            avalible
+                        } else {
+                            println!("Error address");
+                            continue;
+                        }
+                    } else if let Ok(line_number) = target.parse::<usize>() {
+                        if let Some(address) = self.debug_data.get_addr_for_line(None, line_number)
+                        {
+                            address
+                        } else {
+                            println!("Incorrect line number");
+                            continue;
+                        }
+                    } else if let Some(address) =
+                        self.debug_data.get_addr_for_function(None, &target)
+                    {
+                        address
+                    } else {
+                        println!("Function name not found");
+                        continue;
+                    };
+
+                    println!("Set break point {} at {:#x}", self.break_points.len(), addr);
+                    self.break_points.insert(addr, 0);
+                }
             }
         }
     }
 
     fn run_inferior(&mut self) {
         let status = self
-            .get_inferior_as_mut()
-            .wake_up()
+            .inferior
+            .as_mut()
+            .unwrap()
+            .wake_up(&self.break_points)
             .expect("Error getting inferior status");
+
         match status {
             Status::Stopped(signal, rip) => {
                 println!("Child stopped (signal {signal})");
                 let line = self.debug_data.get_line_from_addr(rip).unwrap();
-                println!("Stopped at {}",line);
+                println!("Stopped at {}", line);
             }
             Status::Exited(exit_code) => {
                 println!("Child exited (status: {exit_code})");
@@ -152,4 +189,13 @@ impl Debugger {
             }
         }
     }
+}
+
+fn parse_address(addr: &str) -> Option<usize> {
+    let addr_without_0x = if addr.to_lowercase().starts_with("0x") {
+        &addr[2..]
+    } else {
+        addr
+    };
+    usize::from_str_radix(addr_without_0x, 16).ok()
 }
