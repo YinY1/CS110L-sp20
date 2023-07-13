@@ -71,12 +71,30 @@ fn main() {
     println!("Farm starting on {} CPUs", num_threads);
     let start = Instant::now();
 
-    // TODO: call get_input_numbers() and store a queue of numbers to factor
+    let number_queue = Arc::new(Mutex::new(get_input_numbers()));
 
-    // TODO: spawn `num_threads` threads, each of which pops numbers off the queue and calls
     // factor_number() until the queue is empty
+    let mut threads = Vec::new();
+    for _ in 1..num_threads {
+        let handle = number_queue.clone();
+        threads.push(thread::spawn(move || {
+            factor_agent(handle);
+        }))
+    }
 
-    // TODO: join all the threads you created
+    for thread in threads {
+        thread.join().expect("Panic occurred in thread!");
+    }
 
     println!("Total execution time: {:?}", start.elapsed());
+}
+
+fn factor_agent(number_queue: Arc<Mutex<VecDeque<u32>>>) {
+    loop {
+        let mut queue_ref = number_queue.lock().unwrap();
+        if (*queue_ref).is_empty() {
+            return;
+        }
+        factor_number((*queue_ref).pop_front().unwrap());
+    }
 }
