@@ -75,7 +75,7 @@ fn main() {
 
     // factor_number() until the queue is empty
     let mut threads = Vec::new();
-    for _ in 1..num_threads {
+    for _ in 0..num_threads {
         let handle = number_queue.clone();
         threads.push(thread::spawn(move || {
             factor_agent(handle);
