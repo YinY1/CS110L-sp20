@@ -90,11 +90,15 @@ fn main() {
 }
 
 fn factor_agent(number_queue: Arc<Mutex<VecDeque<u32>>>) {
-    loop {
-        let mut queue_ref = number_queue.lock().unwrap();
-        if (*queue_ref).is_empty() {
-            return;
-        }
-        factor_number((*queue_ref).pop_front().unwrap());
+    while let Some(number) = get_factor_number(&number_queue) {
+        factor_number(number);
     }
+}
+
+fn get_factor_number(number_queue: &Arc<Mutex<VecDeque<u32>>>) -> Option<u32> {
+    let mut queue_ref = number_queue.lock().unwrap();
+    if (*queue_ref).is_empty() {
+        return None;
+    }
+    (*queue_ref).pop_front()
 }
