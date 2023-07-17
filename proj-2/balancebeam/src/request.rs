@@ -77,9 +77,7 @@ pub fn extend_header_value(
 fn parse_request(buffer: &[u8]) -> Result<Option<(http::Request<Vec<u8>>, usize)>, Error> {
     let mut headers = [httparse::EMPTY_HEADER; MAX_NUM_HEADERS];
     let mut req = httparse::Request::new(&mut headers);
-    let res = req
-        .parse(buffer)
-        .or_else(|err| Err(Error::MalformedRequest(err)))?;
+    let res = req.parse(buffer).map_err(Error::MalformedRequest)?;
 
     if let httparse::Status::Complete(len) = res {
         let mut request = http::Request::builder()
@@ -114,7 +112,7 @@ async fn read_headers(stream: &mut TcpStream) -> Result<http::Request<Vec<u8>>, 
         let new_bytes = stream
             .read(&mut request_buffer[bytes_read..])
             .await
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
+            .map_err(Error::ConnectionError)?;
         if new_bytes == 0 {
             // We didn't manage to read a complete request
             return Err(Error::IncompleteRequest(bytes_read));
@@ -153,7 +151,7 @@ async fn read_body(
         let bytes_read = stream
             .read(&mut buffer)
             .await
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
+            .map_err(Error::ConnectionError)?;
 
         // Make sure the client is still sending us bytes
         if bytes_read == 0 {
@@ -201,14 +199,19 @@ pub async fn read_from_stream(stream: &mut TcpStream) -> Result<http::Request<Ve
 /// This function serializes a request to bytes and writes those bytes to the provided stream.
 ///
 /// You will need to modify this function in Milestone 2.
+#[allow(clippy::unused_io_amount)]
 pub async fn write_to_stream(
     request: &http::Request<Vec<u8>>,
     stream: &mut TcpStream,
 ) -> Result<(), std::io::Error> {
-    stream.write(&format_request_line(request).into_bytes()).await?;
+    stream
+        .write(&format_request_line(request).into_bytes())
+        .await?;
     stream.write(&['\r' as u8, '\n' as u8]).await?; // \r\n
     for (header_name, header_value) in request.headers() {
-        stream.write(&format!("{}: ", header_name).as_bytes()).await?;
+        stream
+            .write(&format!("{}: ", header_name).as_bytes())
+            .await?;
         stream.write(header_value.as_bytes()).await?;
         stream.write(&['\r' as u8, '\n' as u8]).await?; // \r\n
     }

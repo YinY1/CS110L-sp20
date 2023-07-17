@@ -55,9 +55,7 @@ fn get_content_length(response: &http::Response<Vec<u8>>) -> Result<Option<usize
 fn parse_response(buffer: &[u8]) -> Result<Option<(http::Response<Vec<u8>>, usize)>, Error> {
     let mut headers = [httparse::EMPTY_HEADER; MAX_NUM_HEADERS];
     let mut resp = httparse::Response::new(&mut headers);
-    let res = resp
-        .parse(buffer)
-        .or_else(|err| Err(Error::MalformedResponse(err)))?;
+    let res = resp.parse(buffer).map_err(Error::MalformedResponse)?;
 
     if let httparse::Status::Complete(len) = res {
         let mut response = http::Response::builder()
@@ -91,7 +89,7 @@ async fn read_headers(stream: &mut TcpStream) -> Result<http::Response<Vec<u8>>,
         let new_bytes = stream
             .read(&mut response_buffer[bytes_read..])
             .await
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
+            .map_err(Error::ConnectionError)?;
         if new_bytes == 0 {
             // We didn't manage to read a complete response
             return Err(Error::IncompleteResponse);
@@ -115,7 +113,10 @@ async fn read_headers(stream: &mut TcpStream) -> Result<http::Response<Vec<u8>>,
 /// present, it reads that many bytes; otherwise, it reads bytes until the connection is closed.
 ///
 /// You will need to modify this function in Milestone 2.
-async fn read_body(stream: &mut TcpStream, response: &mut http::Response<Vec<u8>>) -> Result<(), Error> {
+async fn read_body(
+    stream: &mut TcpStream,
+    response: &mut http::Response<Vec<u8>>,
+) -> Result<(), Error> {
     // The response may or may not supply a Content-Length header. If it provides the header, then
     // we want to read that number of bytes; if it does not, we want to keep reading bytes until
     // the connection is closed.
@@ -126,7 +127,7 @@ async fn read_body(stream: &mut TcpStream, response: &mut http::Response<Vec<u8>
         let bytes_read = stream
             .read(&mut buffer)
             .await
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
+            .map_err(Error::ConnectionError)?;
         if bytes_read == 0 {
             // The server has hung up!
             if content_length.is_none() {
@@ -180,19 +181,24 @@ pub async fn read_from_stream(
 /// This function serializes a response to bytes and writes those bytes to the provided stream.
 ///
 /// You will need to modify this function in Milestone 2.
+#[allow(clippy::unused_io_amount)]
 pub async fn write_to_stream(
     response: &http::Response<Vec<u8>>,
     stream: &mut TcpStream,
 ) -> Result<(), std::io::Error> {
-    stream.write(&format_response_line(response).into_bytes()).await?;
+    stream
+        .write(&format_response_line(response).into_bytes())
+        .await?;
     stream.write(&['\r' as u8, '\n' as u8]).await?; // \r\n
     for (header_name, header_value) in response.headers() {
-        stream.write(&format!("{}: ", header_name).as_bytes()).await?;
+        stream
+            .write(&format!("{}: ", header_name).as_bytes())
+            .await?;
         stream.write(header_value.as_bytes()).await?;
         stream.write(&['\r' as u8, '\n' as u8]).await?; // \r\n
     }
     stream.write(&['\r' as u8, '\n' as u8]).await?;
-    if response.body().len() > 0 {
+    if !response.body().is_empty() {
         stream.write(response.body()).await?;
     }
     Ok(())
