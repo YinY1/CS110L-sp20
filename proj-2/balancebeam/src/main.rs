@@ -1,7 +1,11 @@
 mod request;
 mod response;
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use clap::Parser;
 use rand::{seq::IteratorRandom, SeedableRng};
@@ -51,6 +55,8 @@ struct ProxyState {
     upstream_addresses: Vec<String>,
     /// living addresses record, read-write-lock has better performance, maybe
     living_upstream_addresses: Arc<RwLock<HashSet<String>>>,
+    /// rate limiting counter
+    rate_limiter: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 #[tokio::main]
@@ -87,6 +93,7 @@ async fn main() {
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
         living_upstream_addresses: Arc::new(RwLock::new(options.upstream.into_iter().collect())),
+        rate_limiter: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // do active health check
@@ -104,6 +111,28 @@ async fn main() {
             });
         }
     }
+}
+
+/// simply using fixed window
+async fn rate_limit_check(
+    state: &ProxyState,
+    client_conn: &mut TcpStream,
+    client_ip: &String,
+) -> Result<(), std::io::Error> {
+    let mut rate = state.rate_limiter.write().await;
+    let count = rate.entry(client_ip.to_string()).or_insert(0);
+    *count += 1;
+    if *count > state.max_requests_per_minute {
+        let res = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
+        if let Err(err) = response::write_to_stream(&res, client_conn).await {
+            log::error!("Failed to response client {}: {}", client_ip, err)
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Too many requests",
+        ));
+    }
+    Ok(())
 }
 
 async fn active_health_check(state: &ProxyState) {
@@ -248,6 +277,14 @@ async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
             upstream_ip,
             request::format_request_line(&request)
         );
+
+        // check if too many request
+        if state.max_requests_per_minute > 0 {
+            if let Err(err) = rate_limit_check(state, &mut client_conn, &client_ip).await {
+                log::error!("rate limit: {}", err);
+                continue;
+            }
+        }
 
         // Add X-Forwarded-For header so that the upstream server knows the client's IP address.
         // (We're the ones connecting directly to the upstream server, so without this header, the
