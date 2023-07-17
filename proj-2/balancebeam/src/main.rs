@@ -1,10 +1,10 @@
 mod request;
 mod response;
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use clap::Parser;
-use rand::{Rng, SeedableRng};
+use rand::{seq::IteratorRandom, SeedableRng};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::RwLock,
@@ -50,7 +50,7 @@ struct ProxyState {
     /// Addresses of servers that we are proxying to
     upstream_addresses: Vec<String>,
     /// living addresses record, read-write-lock has better performance, maybe
-    living_upstream_addresses: Arc<RwLock<Vec<String>>>,
+    living_upstream_addresses: Arc<RwLock<HashSet<String>>>,
 }
 
 #[tokio::main]
@@ -86,8 +86,14 @@ async fn main() {
         active_health_check_interval: options.active_health_check_interval,
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
-        living_upstream_addresses: Arc::new(RwLock::new(options.upstream)),
+        living_upstream_addresses: Arc::new(RwLock::new(options.upstream.into_iter().collect())),
     };
+
+    // do active health check
+    let stat = state.clone();
+    tokio::spawn(async move {
+        active_health_check(&stat).await;
+    });
 
     // Handle the connection!
     loop {
@@ -100,12 +106,64 @@ async fn main() {
     }
 }
 
+async fn active_health_check(state: &ProxyState) {
+    loop {
+        tokio::time::sleep(Duration::new(state.active_health_check_interval as u64, 0)).await;
+
+        for upstream_ip in &state.upstream_addresses {
+            let request = http::Request::builder()
+                .method(http::Method::GET)
+                .uri(&state.active_health_check_path)
+                .header("Host", upstream_ip)
+                .body(Vec::new())
+                .unwrap();
+
+            match TcpStream::connect(upstream_ip).await {
+                Ok(mut upstream) => {
+                    if let Err(err) = request::write_to_stream(&request, &mut upstream).await {
+                        log::error!("Failed to request upstream {}: {}", upstream_ip, err);
+                        continue;
+                    }
+
+                    match response::read_from_stream(&mut upstream, request.method()).await {
+                        Ok(response) => {
+                            if response.status().as_u16() == 200 {
+                                // If a failed upstream returns HTTP 200, put it back in the rotation of upstream servers.
+                                let mut living = state.living_upstream_addresses.write().await;
+                                if !living.contains(upstream_ip) {
+                                    living.insert(upstream_ip.to_string());
+                                }
+                            } else {
+                                //  If an online upstream returns a non-200 status code, mark that server as failed.
+                                let mut living = state.living_upstream_addresses.write().await;
+                                if living.contains(upstream_ip) {
+                                    living.remove(upstream_ip);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            //  If an online upstream fails to return a response, mark that server as failed.
+                            log::error!("Failed to get response from the upstream {}", upstream_ip);
+                            let mut living = state.living_upstream_addresses.write().await;
+                            if living.contains(upstream_ip) {
+                                living.remove(upstream_ip);
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::error!("Failed to connect to upstream {}: {}", upstream_ip, err);
+                }
+            }
+        }
+    }
+}
+
 async fn connect_to_upstream(state: &ProxyState) -> Result<TcpStream, std::io::Error> {
     loop {
         let living = state.living_upstream_addresses.read().await;
         let mut rng = rand::rngs::StdRng::from_entropy();
-        let upstream_idx = rng.gen_range(0..living.len());
-        let upstream_ip = &living[upstream_idx].clone();
+        let upstream_ip = &living.iter().choose(&mut rng).unwrap().clone();
         drop(living);
 
         match TcpStream::connect(upstream_ip).await {
@@ -116,7 +174,7 @@ async fn connect_to_upstream(state: &ProxyState) -> Result<TcpStream, std::io::E
                 log::error!("Failed to connect to upstream {}: {}", upstream_ip, err);
 
                 let mut living = state.living_upstream_addresses.write().await;
-                living.remove(upstream_idx);
+                living.remove(upstream_ip);
 
                 if living.is_empty() {
                     log::error!("Failed to connect upstream: all upstreams are dead");
