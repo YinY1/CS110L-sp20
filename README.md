@@ -1,9 +1,7 @@
-# CS 110L Spring 2020 starter code
+# CS 110L Spring 2020
 
 Assignment handouts are available [here](https://reberhardt.com/cs110l/spring-2020/).
 
-Trying out these assignments? Adapting these for a class? [Please let us
-know](mailto:ryan@reberhardt.com); we'd love to hear from you!
+Implemented in 2023-7
 
-Please don't post solution code publicly on the internet. We have plagiarism
-detection tools, but we'd rather make it hard to plagiarize in the first place.
+Note: proj2 needs nightly-2022-08-01 (others passed in 2023-05-31), see [here](/proj-2/balancebeam/README.md).
