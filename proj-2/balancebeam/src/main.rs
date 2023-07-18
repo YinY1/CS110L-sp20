@@ -102,6 +102,17 @@ async fn main() {
         active_health_check(&stat).await;
     });
 
+    // do rate limiting check
+    let stat = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let mut limiter = stat.rate_limiter.write().await;
+            limiter.clear();
+        }
+    });
+
     // Handle the connection!
     loop {
         if let Ok((stream, _)) = listener.accept().await {
